@@ -1,7 +1,8 @@
 const std = @import("std");
-const net = std.Io.net;
+const net = std.net;
 const http = std.http;
 const crypto = std.crypto;
+const Allocator = std.mem.Allocator;
 
 const tls = @import("tls");
 
@@ -88,6 +89,17 @@ const ResponseStatus = enum {
     }
 };
 
+const ParsedHeader = struct {
+    delivered_to: []const u8,
+    received: []const u8,
+    from: []const u8,
+    to: []const u8,
+    subject: []const u8,
+    date: []const u8,
+    content_type: []const u8,
+    mime_version: []const u8,
+};
+
 const ImapError = error {
     ConnectionError,
 };
@@ -99,18 +111,18 @@ const ImapClient = struct {
 
     tag_counter: u32 = 0,
 
-    pub fn init(hostname: net.HostName, port: u16, io: std.Io, socket_read_buffer: []u8, socket_write_buffer: []u8) !ImapClient {
+    pub fn init(allocator: Allocator, hostname: []const u8, port: u16, socket_read_buffer: []u8, socket_write_buffer: []u8) !ImapClient {
         if (port == IMAP_PORT) {
-            const options = net.IpAddress.ConnectOptions{
-                .mode = .stream,
-                .protocol = .tcp,
-            };
-
-            var stream = try hostname.connect(io, port, options);
-            var reader = stream.reader(io, socket_read_buffer);
+            // const options = net.IpAddress.ConnectOptions{
+            //     .mode = .stream,
+            //     .protocol = .tcp,
+            // };
+            // var stream = try hostname.connect(io, port, options); // 0.16
+            var stream = try std.net.tcpConnectToHost(allocator, hostname, port);
+            var reader = stream.reader(socket_read_buffer);
 
             // We use the writer buffer to read the initial response
-            const line = try readerReadNextLine(&reader.interface, socket_write_buffer);
+            const line = try readerReadNextLine(reader.interface(), socket_write_buffer);
             std.debug.print("Server Init response: {s}", .{line});
             // Parse the '*' tag
             if (line.len < 2 or line[0] != '*') {
@@ -128,7 +140,7 @@ const ImapClient = struct {
 
             // We don't need to clean the buffer,
             // the next response will overwrite, and CRLF will be the end sentinel
-            const writer = stream.writer(io, socket_write_buffer);
+            const writer = stream.writer(socket_write_buffer);
 
             return ImapClient{
                 .stream = stream,
@@ -148,7 +160,7 @@ const ImapClient = struct {
     ///
     /// Returns .StreamTooLong if the `response_buffer` cannot store the complete line
     fn readNextLine(client: *ImapClient, response_buffer: []u8) std.Io.Reader.DelimiterError![]u8 {
-        return readerReadNextLine(&client.reader.interface, response_buffer);
+        return readerReadNextLine(client.reader.interface(), response_buffer);
     }
 
     fn rawRunCommand(client: *ImapClient, command: []const u8, response_buffer: []u8) !usize {
@@ -181,7 +193,7 @@ const ImapClient = struct {
     }
 
     // log outs and closes the connection
-    fn logout(client: *ImapClient, io: std.Io) void {
+    fn logout(client: *ImapClient) void {
         std.debug.print("LOGOUT\n", .{});
         var response_buffer: [124]u8 = undefined;
         const n = client.rawRunCommand("LOGOUT", &response_buffer) catch {
@@ -192,7 +204,7 @@ const ImapClient = struct {
             return;
         };
         std.debug.print("Response:\n```\n{s}\n```\n", .{response_buffer[0..n-2]});
-        client.stream.close(io);
+        client.stream.close();
     }
 };
 
@@ -208,17 +220,19 @@ pub fn main() !void {
     }
     
     const allocator = debug_allocator.allocator();
-    var threaded_io = std.Io.Threaded.init(allocator);
-    defer threaded_io.deinit();
+
+    // 0.16
+    // var threaded_io = std.Io.Threaded.init(allocator);
+    // defer threaded_io.deinit();
 
     var socket_read_buffer: [10]u8 = undefined;
     var socket_writer_buffer: [2048]u8 = undefined;
 
     const hostname_bytes = "test.rebex.net";
-    const hostname = try net.HostName.init(hostname_bytes);
+    // const hostname = try net.HostName.init(hostname_bytes); // 0.16
     const port = IMAP_PORT;
-    var client = try ImapClient.init(hostname, port, threaded_io.io(), &socket_read_buffer, &socket_writer_buffer);
-    defer client.logout(threaded_io.io());
+    var client = try ImapClient.init(allocator, hostname_bytes, port, &socket_read_buffer, &socket_writer_buffer);
+    defer client.logout();
 
     std.debug.print("CAPABILITY...\n", .{});
     var responseBuffer: [1024]u8 = undefined;
@@ -242,10 +256,10 @@ pub fn main() !void {
     std.debug.print("Response:\n```\n{s}\n```\n", .{responseBuffer[0..n-2]});
 
 
-    var stdin = std.Io.File.stdin();
+    var stdin = std.fs.File.stdin();
     var line_buf: [512]u8 = undefined;
-    var stdin_reader = stdin.reader(threaded_io.io(), &line_buf);
-    defer stdin.close(threaded_io.io());
+    var stdin_reader = stdin.reader(&line_buf);
+    defer stdin.close();
     while (true) {
         // We should use stdout here, but lazyness as the api seems more anoying
         std.debug.print("> ", .{});
