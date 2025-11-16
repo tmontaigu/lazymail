@@ -50,6 +50,45 @@ fn readerReadNextLine(reader: *std.Io.Reader, response_buffer: []u8) std.Io.Read
 }
 
 
+const ParseByteCountError = error {
+    InvalidString,
+    InvalidCharacter,
+    Overflow,
+};
+
+/// Given a response line that ends with 
+/// `{x}\r\n`
+///
+/// This function parse the value x
+fn extractRawBytesCount(line: []const u8) ParseByteCountError!usize {
+    if (line.len < 5) {
+        // `*`` + `{` + `}` + `\r` + `\n` = 5
+        return ParseByteCountError.InvalidString;
+    }
+    if (line[line.len - 3] != '}') {
+        return ParseByteCountError.InvalidString;
+    }
+    const count_end = line.len - 3;
+
+    var count_start = count_end - 1;
+    var found = false;
+    while (count_start >= 0) {
+        count_start -= 1;
+        if (line[count_start] == '{') {
+            found = true;
+            count_start += 1;
+            break;
+        }
+    }
+
+    if (!found) {
+        return ParseByteCountError.InvalidString;
+    }
+
+   return std.fmt.parseInt(usize, line[count_start..count_end], 10);
+}
+
+
 // From the spec:
 // | Ok, No, Bad can be tagged or untagged
 // | PreAuth and Byt are always untagged
@@ -325,32 +364,7 @@ pub const ImapClient = struct {
                 // This line is should look like this:
                 // `* 1 FETCH (BODY[HEADER] {n}`
                 // where `n` is the number of literal bytes of the header
-                
-                if (line.len < 5) {
-                    // `*`` + `{` + `}` + `\r\n` = 5
-                    @panic("todo");
-                }
-                if (line[line.len - 3] != '}') {
-                    @panic("todo");
-                }
-                const count_end = line.len - 3;
-
-                var count_start = count_end - 1;
-                var found = false;
-                while (count_start >= 0) {
-                    count_start -= 1;
-                    if (line[count_start] == '{') {
-                        found = true;
-                        count_start += 1;
-                        break;
-                    }
-                }
-
-                if (!found) {
-                    @panic("todo");
-                }
-
-                const raw_bytes_count = try std.fmt.parseInt(usize, line[count_start..count_end], 10);
+                const raw_bytes_count = try extractRawBytesCount(line);
 
                 const HEADER_SIZE_LIMIT = 256 * 1024; // 256 KB
                 if (raw_bytes_count > HEADER_SIZE_LIMIT) {
@@ -362,6 +376,44 @@ pub const ImapClient = struct {
                 try client.reader.interface().readSliceAll(bytes);
 
                 try out_list.append(allocator, bytes);
+
+                while (true) {
+                    line = try client.reader.interface().takeDelimiterInclusive('\n');
+                    if (line.len >= 1 and line[0] == ')') {
+                        break;
+                    }
+                }
+            } else if (std.mem.startsWith(u8, line, tag)) {
+                // We found the line that starts with the query tag
+                // this means the server has completed the request
+                //
+                // TODO check for OK/BAD/
+                break;
+            }
+        }
+    }
+
+    pub fn readBodyBytesAlloc(client: *ImapClient, id: u32, allocator: Allocator, out_bytes: *ArrayList(u8)) !void {
+        const tag = try client.sendFormattedCommand("FETCH {} (BODY[TEXT])", .{id});
+        while (true) {
+            // TODO try to handle StreamTooLong (=line too long) ?
+            var line = try client.reader.interface().takeDelimiterInclusive('\n');
+
+            if (std.mem.startsWith(u8, line, "*")) {
+                // This line is should look like this:
+                // `* 1 FETCH (BODY[TEXT] {n}`
+                // where `n` is the number of literal bytes of the header
+                const raw_bytes_count = try extractRawBytesCount(line);
+
+                const BODY_SIZE_LIMIT = 64 * 1024 * 1000; // 64 MB
+                if (raw_bytes_count > BODY_SIZE_LIMIT) {
+                    @panic("todo: return an error like Suspicious size");
+                }
+
+                var writer = std.Io.Writer.Allocating.fromArrayList(allocator, out_bytes);
+                try writer.ensureTotalCapacity(raw_bytes_count);
+                try client.reader.interface().streamExact(&writer.writer, raw_bytes_count);
+                out_bytes.* = writer.toArrayList();
 
                 while (true) {
                     line = try client.reader.interface().takeDelimiterInclusive('\n');

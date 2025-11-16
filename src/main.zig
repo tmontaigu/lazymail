@@ -4,7 +4,17 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
 const lazymail = @import("lazymail_lib");
+
 const ImapClient = lazymail.ImapClient;
+
+
+const OS = @import("builtin").os;
+const LINE_ENDING: []const u8 = switch (OS.tag) {
+    .windows => "\r\n",
+    .linux => "\n",
+    .macos => "\n",
+    else => "\n",
+};
 
 pub fn main() !void {
     var debug_allocator = std.heap.DebugAllocator(.{}).init;
@@ -61,6 +71,12 @@ pub fn main() !void {
     }
     headers.clearAndFree(allocator);
 
+    var body_buffer = ArrayList(u8).empty;
+    defer body_buffer.clearAndFree(allocator);
+
+    try client.readBodyBytesAlloc(3, allocator, &body_buffer);
+    std.debug.print("BODY:\n```\n{s}\n```\n", .{body_buffer.items});
+
     var stdin = std.fs.File.stdin();
     var line_buf: [512]u8 = undefined;
     var stdin_reader = stdin.reader(&line_buf);
@@ -74,13 +90,13 @@ pub fn main() !void {
             break;
         };
 
-        if (std.mem.eql(u8, line, "q\n")) {
+        std.debug.print("line: {} '{s}' => {}'\n", .{line.len, line, std.mem.eql(u8, line, "q\n")});
+        const trimed_line = std.mem.trimRight(u8, line, LINE_ENDING);
+        if (std.mem.eql(u8, trimed_line, "q")) {
             break;
         }
 
-        // The line includes an extra `\n` which must not be part of the 
-        // request
-        n = client.rawRunCommand(line[0..line.len-1], &responseBuffer) catch |err| {
+        n = client.rawRunCommand(trimed_line, &responseBuffer) catch |err| {
             std.debug.print("Error: {}\n", .{err});
             // break to have clean logout
             break;

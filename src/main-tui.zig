@@ -17,6 +17,15 @@ const ActiveSection = enum {
     btm,
 };
 
+// fn spawnExample() !void {
+    // const progname: []const u8 = "nvim";
+    // const argv: [1][]const u8 = .{progname};
+    // //try std.process.execv(alloc, &argv);
+    // var child = std.process.Child.init(&argv, alloc);
+    // const term = try child.spawnAndWait();
+    // std.debug.print("Exited with {}\n", .{term});
+// }
+
 pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.detectLeaks()) log.err("Memory leak detected!", .{});
@@ -36,10 +45,9 @@ pub fn main() !void {
     var responseBuffer: [2048]u8 = undefined;
     std.debug.print("LOGIN...\n", .{});
     _ = try client.rawRunCommand("LOGIN demo password", &responseBuffer);
+
     std.debug.print("SELECT INBOX...\n", .{});
     _ = try client.rawRunCommand("SELECT INBOX", &responseBuffer);
-    const n = try client.rawRunCommand("FETCH 1 (BODY[HEADER])", &responseBuffer);
-    std.debug.print("Response:\n```\n{s}\n```\n", .{responseBuffer[0..n-2]});
 
     // var mail_headers: [1]lazymail.ParsedHeader = undefined;
     // mail_headers[0] = lazymail.ParsedHeader.parse(responseBuffer[0..n]);
