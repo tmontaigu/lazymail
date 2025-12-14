@@ -189,27 +189,37 @@ pub fn main() !void {
                             break :midEvt;
                         }
                         // Change Row
-                        if (key.matchesAny(&.{ vaxis.Key.up, 'k' }, .{})) demo_tbl.row -|= 1;
-                        if (key.matchesAny(&.{ vaxis.Key.down, 'j' }, .{})) demo_tbl.row +|= 1;
-                        // Change Column
-                        if (key.matchesAny(&.{ vaxis.Key.left, 'h' }, .{})) demo_tbl.col -|= 1;
-                        if (key.matchesAny(&.{ vaxis.Key.right, 'l' }, .{})) demo_tbl.col +|= 1;
-                        // Select/Unselect Row
-                        if (key.matches(vaxis.Key.space, .{})) {
-                            const rows = demo_tbl.sel_rows orelse createRows: {
-                                demo_tbl.sel_rows = try alloc.alloc(u16, 1);
-                                break :createRows demo_tbl.sel_rows.?;
-                            };
-                            var rows_list = std.ArrayList(u16).fromOwnedSlice(rows);
-                            for (rows_list.items, 0..) |row, idx| {
-                                if (row != demo_tbl.row) continue;
-                                _ = rows_list.orderedRemove(idx);
-                                break;
-                            } else try rows_list.append(alloc, demo_tbl.row);
-                            demo_tbl.sel_rows = try rows_list.toOwnedSlice(alloc);
+                        if (key.matchesAny(&.{ vaxis.Key.up, 'k' }, .{})) {
+                            if (demo_tbl.row > 0) {
+                                demo_tbl.row -= 1;
+                            }
                         }
+                        if (key.matchesAny(&.{ vaxis.Key.down, 'j' }, .{})) {
+                            if (demo_tbl.row < num_valid) {
+                                demo_tbl.row += 1;
+                            }
+                        }
+                        // Change Column
+                        // if (key.matchesAny(&.{ vaxis.Key.left, 'h' }, .{})) demo_tbl.col -|= 1;
+                        // if (key.matchesAny(&.{ vaxis.Key.right, 'l' }, .{})) demo_tbl.col +|= 1;
+                       
+                        // Select/Unselect Row
+                        // if (key.matches(vaxis.Key.space, .{})) {
+                        //     const rows = demo_tbl.sel_rows orelse createRows: {
+                        //         demo_tbl.sel_rows = try alloc.alloc(u16, 1);
+                        //         break :createRows demo_tbl.sel_rows.?;
+                        //     };
+                        //     var rows_list = std.ArrayList(u16).fromOwnedSlice(rows);
+                        //     for (rows_list.items, 0..) |row, idx| {
+                        //         if (row != demo_tbl.row) continue;
+                        //         _ = rows_list.orderedRemove(idx);
+                        //         break;
+                        //     } else try rows_list.append(alloc, demo_tbl.row);
+                        //     demo_tbl.sel_rows = try rows_list.toOwnedSlice(alloc);
+                        // }
+
                         // See Row Content
-                        if (key.matches(vaxis.Key.enter, .{}) or key.matches('j', .{ .ctrl = true })) see_content = !see_content;
+                        if (key.matches(vaxis.Key.space, .{}) or key.matches('j', .{ .ctrl = true })) see_content = !see_content;
                     },
                     .btm => {
                         if (key.matchesAny(&.{ vaxis.Key.up, 'k' }, .{}) and moving) active = .mid
@@ -240,17 +250,19 @@ pub fn main() !void {
 
         // Content
         seeRow: {
-            if (!see_content) {
+            if (!see_content or demo_tbl.row >= num_valid) {
                 demo_tbl.active_content_fn = null;
                 demo_tbl.active_ctx = &{};
                 break :seeRow;
             }
             const RowContext = struct {
-                row: []const u8,
+                data: []const u8,
                 bg: vaxis.Color,
             };
+            const header = &header_page[demo_tbl.row];
+            const data = try std.fmt.allocPrint(event_alloc, "From: {s}\nDate: {s}\nSubject: {s}", .{header.from, header.date, header.subject});
             const row_ctx = RowContext{
-                .row = try fmt.allocPrint(event_alloc, "Row #: {d}", .{demo_tbl.row}),
+                .data = data,
                 .bg = demo_tbl.active_bg,
             };
             demo_tbl.active_ctx = &row_ctx;
@@ -265,19 +277,9 @@ pub fn main() !void {
                         .height = 4,
                     });
                     see_win.fill(.{ .style = .{ .bg = ctx.bg } });
-                    const content_logo =
-                        \\
-                        \\░█▀▄░█▀█░█░█░░░█▀▀░█▀█░█▀█░▀█▀░█▀▀░█▀█░▀█▀
-                        \\░█▀▄░█░█░█▄█░░░█░░░█░█░█░█░░█░░█▀▀░█░█░░█░
-                        \\░▀░▀░▀▀▀░▀░▀░░░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀░▀░▀░░▀░
-                    ;
                     const content_segs: []const vaxis.Cell.Segment = &.{
                         .{
-                            .text = ctx.row,
-                            .style = .{ .bg = ctx.bg },
-                        },
-                        .{
-                            .text = content_logo,
+                            .text = ctx.data,
                             .style = .{ .bg = ctx.bg },
                         },
                     };
